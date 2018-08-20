@@ -11,6 +11,8 @@
 #include "NsoProcess.h"
 #include "NroProcess.h"
 #include "NacpProcess.h"
+#include "PkiCertProcess.h"
+#include "EsTikProcess.h"
 #include "AssetProcess.h"
 
 #ifdef _WIN32
@@ -44,13 +46,13 @@ int main(int argc, char** argv)
 			xci.setVerifyMode(user_set.isVerifyFile());
 
 			if (user_set.getXciUpdatePath().isSet)
-				xci.setPartitionForExtract(nx::xci::kUpdatePartitionStr, user_set.getXciUpdatePath().var);
+				xci.setPartitionForExtract(nn::hac::xci::kUpdatePartitionStr, user_set.getXciUpdatePath().var);
 			if (user_set.getXciLogoPath().isSet)
-				xci.setPartitionForExtract(nx::xci::kLogoPartitionStr, user_set.getXciLogoPath().var);
+				xci.setPartitionForExtract(nn::hac::xci::kLogoPartitionStr, user_set.getXciLogoPath().var);
 			if (user_set.getXciNormalPath().isSet)
-				xci.setPartitionForExtract(nx::xci::kNormalPartitionStr, user_set.getXciNormalPath().var);
+				xci.setPartitionForExtract(nn::hac::xci::kNormalPartitionStr, user_set.getXciNormalPath().var);
 			if (user_set.getXciSecurePath().isSet)
-				xci.setPartitionForExtract(nx::xci::kSecurePartitionStr, user_set.getXciSecurePath().var);
+				xci.setPartitionForExtract(nn::hac::xci::kSecurePartitionStr, user_set.getXciSecurePath().var);
 			xci.setListFs(user_set.isListFs());
 
 			xci.process();
@@ -172,6 +174,29 @@ int main(int argc, char** argv)
 			nacp.setVerifyMode(user_set.isVerifyFile());
 
 			nacp.process();
+		}
+		else if (user_set.getFileType() == FILE_PKI_CERT)
+		{
+			PkiCertProcess cert;
+
+			cert.setInputFile(new fnd::SimpleFile(user_set.getInputPath(), fnd::SimpleFile::Read), OWN_IFILE);
+			cert.setKeyset(&user_set.getKeyset());
+			cert.setCliOutputMode(user_set.getCliOutputMode());
+			cert.setVerifyMode(user_set.isVerifyFile());
+
+			cert.process();
+		}
+		else if (user_set.getFileType() == FILE_ES_TIK)
+		{
+			EsTikProcess tik;
+
+			tik.setInputFile(new fnd::SimpleFile(user_set.getInputPath(), fnd::SimpleFile::Read), OWN_IFILE);
+			tik.setKeyset(&user_set.getKeyset());
+			tik.setCertificateChain(user_set.getCertificateChain());
+			tik.setCliOutputMode(user_set.getCliOutputMode());
+			tik.setVerifyMode(user_set.isVerifyFile());
+
+			tik.process();
 		}
 		else if (user_set.getFileType() == FILE_HB_ASSET)
 		{

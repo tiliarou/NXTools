@@ -1,5 +1,6 @@
 #include "UserSettings.h"
 #include "version.h"
+#include "PkiValidator.h"
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -10,18 +11,22 @@
 #include <fnd/SimpleTextOutput.h>
 #include <fnd/Vec.h>
 #include <fnd/ResourceFileReader.h>
-#include <nx/NcaUtils.h>
-#include <nx/AesKeygen.h>
-#include <nx/xci.h>
-#include <nx/pfs.h>
-#include <nx/nca.h>
-#include <nx/npdm.h>
-#include <nx/romfs.h>
-#include <nx/cnmt.h>
-#include <nx/nacp.h>
-#include <nx/nso.h>
-#include <nx/nro.h>
-#include <nx/aset.h>
+#include <nn/hac/NcaUtils.h>
+#include <nn/hac/AesKeygen.h>
+#include <nn/hac/xci.h>
+#include <nn/hac/pfs.h>
+#include <nn/hac/nca.h>
+#include <nn/hac/npdm.h>
+#include <nn/hac/romfs.h>
+#include <nn/hac/cnmt.h>
+#include <nn/hac/nacp.h>
+#include <nn/hac/nso.h>
+#include <nn/hac/nro.h>
+#include <nn/hac/aset.h>
+#include <nn/pki/SignedData.h>
+#include <nn/pki/CertificateBody.h>
+#include <nn/pki/SignUtils.h>
+#include <nn/es/TicketBody_V2.h>
 
 UserSettings::UserSettings()
 {}
@@ -36,39 +41,41 @@ void UserSettings::parseCmdArgs(const std::vector<std::string>& arg_list)
 
 void UserSettings::showHelp()
 {
-	printf("NSTool v%d.%d (C) %s\n", VER_MAJOR, VER_MINOR, AUTHORS);
+	printf("NSTool v%d.%d.%d (C) %s\n", VER_MAJOR, VER_MINOR, VER_PATCH, AUTHORS);
 	printf("Built: %s %s\n\n", __TIME__, __DATE__);
 	
 	printf("Usage: nstool [options... ] <file>\n");
 	printf("\n  General Options:\n");
-	printf("      -d, --dev       Use devkit keyset\n");
-	printf("      -k, --keyset    Specify keyset file\n");
-	printf("      -t, --type      Specify input file type [xci, pfs, romfs, nca, npdm, cnmt, nso, nro, nacp, aset]\n");
-	printf("      -y, --verify    Verify file\n");
+	printf("      -d, --dev       Use devkit keyset.\n");
+	printf("      -k, --keyset    Specify keyset file.\n");
+	printf("      -t, --type      Specify input file type. [xci, pfs, romfs, nca, npdm, cnmt, nso, nro, nacp, aset, cert, tik]\n");
+	printf("      -y, --verify    Verify file.\n");
 	printf("\n  Output Options:\n");
-	printf("      --showkeys      Show keys generated\n");
-	printf("      --showlayout    Show layout metadata\n");
-	printf("      -v, --verbose   Verbose output\n");
+	printf("      --showkeys      Show keys generated.\n");
+	printf("      --showlayout    Show layout metadata.\n");
+	printf("      -v, --verbose   Verbose output.\n");
 	printf("\n  XCI (GameCard Image)\n");
 	printf("    nstool [--listfs] [--update <dir> --logo <dir> --normal <dir> --secure <dir>] <.xci file>\n");
-	printf("      --listfs        Print file system in embedded partitions\n");
-	printf("      --update        Extract \"update\" partition to directory\n");
-	printf("      --logo          Extract \"logo\" partition to directory\n");
-	printf("      --normal        Extract \"normal\" partition to directory\n");
-	printf("      --secure        Extract \"secure\" partition to directory\n");
+	printf("      --listfs        Print file system in embedded partitions.\n");
+	printf("      --update        Extract \"update\" partition to directory.\n");
+	printf("      --logo          Extract \"logo\" partition to directory.\n");
+	printf("      --normal        Extract \"normal\" partition to directory.\n");
+	printf("      --secure        Extract \"secure\" partition to directory.\n");
 	printf("\n  PFS0/HFS0 (PartitionFs), RomFs, NSP (Ninendo Submission Package)\n");
 	printf("    nstool [--listfs] [--fsdir <dir>] <file>\n");
-	printf("      --listfs        Print file system\n");
-	printf("      --fsdir         Extract file system to directory\n");
+	printf("      --listfs        Print file system.\n");
+	printf("      --fsdir         Extract file system to directory.\n");
 	printf("\n  NCA (Nintendo Content Archive)\n");
 	printf("    nstool [--listfs] [--bodykey <key> --titlekey <key>] [--part0 <dir> ...] <.nca file>\n");
-	printf("      --listfs        Print file system in embedded partitions\n");
-	printf("      --titlekey      Specify title key extracted from ticket\n");
-	printf("      --bodykey       Specify body encryption key\n");
-	printf("      --part0         Extract \"partition 0\" to directory \n");
-	printf("      --part1         Extract \"partition 1\" to directory \n");
-	printf("      --part2         Extract \"partition 2\" to directory \n");
-	printf("      --part3         Extract \"partition 3\" to directory \n");
+	printf("      --listfs        Print file system in embedded partitions.\n");
+	printf("      --titlekey      Specify title key extracted from ticket.\n");
+	printf("      --bodykey       Specify body encryption key.\n");
+	printf("      --tik           Specify ticket to source title key.\n");
+	printf("      --cert          Specify certificate chain to verify ticket.\n");
+	printf("      --part0         Extract \"partition 0\" to directory.\n");
+	printf("      --part1         Extract \"partition 1\" to directory.\n");
+	printf("      --part2         Extract \"partition 2\" to directory.\n");
+	printf("      --part3         Extract \"partition 3\" to directory.\n");
 	printf("\n  NSO (Nintendo Software Object), NRO (Nintendo Relocatable Object)\n");
 	printf("    nstool [--listapi --listsym] [--insttype <inst. type>] <file>\n");
 	printf("      --listapi       Print SDK API List.\n");
@@ -122,7 +129,7 @@ bool UserSettings::isListSymbols() const
 	return mListSymbols;
 }
 
-nx::npdm::InstructionType UserSettings::getInstType() const
+nn::hac::npdm::InstructionType UserSettings::getInstType() const
 {
 	return mInstructionType;
 }
@@ -180,6 +187,11 @@ const sOptional<std::string>& UserSettings::getAssetIconPath() const
 const sOptional<std::string>& UserSettings::getAssetNacpPath() const
 {
 	return mAssetNacpPath;
+}
+
+const fnd::List<nn::pki::SignedData<nn::pki::CertificateBody>>& UserSettings::getCertificateChain() const
+{
+	return mCertChain;
 }
 
 void UserSettings::populateCmdArgs(const std::vector<std::string>& arg_list, sCmdArgs& cmd_args)
@@ -296,6 +308,18 @@ void UserSettings::populateCmdArgs(const std::vector<std::string>& arg_list, sCm
 			cmd_args.nca_bodykey = arg_list[i+1];
 		}
 
+		else if (arg_list[i] == "--tik")
+		{
+			if (!hasParamter) throw fnd::Exception(kModuleName, arg_list[i] + " requries a parameter.");
+			cmd_args.ticket_path = arg_list[i+1];
+		}
+
+		else if (arg_list[i] == "--cert")
+		{
+			if (!hasParamter) throw fnd::Exception(kModuleName, arg_list[i] + " requries a parameter.");
+			cmd_args.cert_path = arg_list[i+1];
+		}
+
 		else if (arg_list[i] == "--part0")
 		{
 			if (!hasParamter) throw fnd::Exception(kModuleName, arg_list[i] + " requries a parameter.");
@@ -361,10 +385,10 @@ void UserSettings::populateCmdArgs(const std::vector<std::string>& arg_list, sCm
 
 void UserSettings::populateKeyset(sCmdArgs& args)
 {
-	crypto::aes::sAes128Key zeros_aes_key;
-	crypto::aes::sAesXts128Key zeros_aes_xts_key;
-	memset((void*)&zeros_aes_key, 0, sizeof(crypto::aes::sAes128Key));
-	memset((void*)&zeros_aes_xts_key, 0, sizeof(crypto::aes::sAesXts128Key));
+	fnd::aes::sAes128Key zeros_aes_key;
+	fnd::aes::sAesXts128Key zeros_aes_xts_key;
+	memset((void*)&zeros_aes_key, 0, sizeof(fnd::aes::sAes128Key));
+	memset((void*)&zeros_aes_xts_key, 0, sizeof(fnd::aes::sAesXts128Key));
 	memset((void*)&mKeyset, 0, sizeof(sKeyset));
 
 	fnd::ResourceFileReader res;
@@ -415,20 +439,21 @@ void UserSettings::populateKeyset(sCmdArgs& args)
 	const std::string kKekGenSource = "aes_kek_generation";
 	const std::string kKeyGenSource = "aes_key_generation";
 	const std::string kAcidBase = "acid";
+	const std::string kPkiRootBase = "pki_root";
 	const std::string kTicketCommonKeyBase[2] = { "titlekek", "ticket_commonkey" };
 	const std::string kNcaBodyBase[2] = {"key_area_key", "nca_body_keak"};
 	const std::string kNcaBodyKeakIndexName[3] = {"application", "ocean", "system"};
 
 
 	// sources
-	crypto::aes::sAes128Key master_key[kMasterKeyNum] = { zeros_aes_key };
-	crypto::aes::sAes128Key package2_key_source = zeros_aes_key;
-	crypto::aes::sAes128Key ticket_titlekek_source = zeros_aes_key;
-	crypto::aes::sAes128Key key_area_key_source[3] = { zeros_aes_key, zeros_aes_key, zeros_aes_key };
-	crypto::aes::sAes128Key aes_kek_generation_source = zeros_aes_key;
-	crypto::aes::sAes128Key aes_key_generation_source = zeros_aes_key;
-	crypto::aes::sAes128Key nca_header_kek_source = zeros_aes_key;
-	crypto::aes::sAesXts128Key nca_header_key_source = zeros_aes_xts_key;
+	fnd::aes::sAes128Key master_key[kMasterKeyNum] = { zeros_aes_key };
+	fnd::aes::sAes128Key package2_key_source = zeros_aes_key;
+	fnd::aes::sAes128Key ticket_titlekek_source = zeros_aes_key;
+	fnd::aes::sAes128Key key_area_key_source[3] = { zeros_aes_key, zeros_aes_key, zeros_aes_key };
+	fnd::aes::sAes128Key aes_kek_generation_source = zeros_aes_key;
+	fnd::aes::sAes128Key aes_key_generation_source = zeros_aes_key;
+	fnd::aes::sAes128Key nca_header_kek_source = zeros_aes_key;
+	fnd::aes::sAesXts128Key nca_header_key_source = zeros_aes_xts_key;
 
 
 #define _CONCAT_2_STRINGS(str1, str2) ((str1) + "_" + (str2))
@@ -484,40 +509,117 @@ void UserSettings::populateKeyset(sCmdArgs& args)
 	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kXciHeaderBase, kKeyStr), mKeyset.xci.header_key.key, 0x10);
 
 	// store rsa keys
-	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kNcaHeaderBase[1], kRsaKeySuffix[0]), mKeyset.nca.header_sign_key.priv_exponent, 0x100);
-	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kNcaHeaderBase[1], kRsaKeySuffix[1]), mKeyset.nca.header_sign_key.modulus, 0x100);
+	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kNcaHeaderBase[1], kRsaKeySuffix[0]), mKeyset.nca.header_sign_key.priv_exponent, fnd::rsa::kRsa2048Size);
+	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kNcaHeaderBase[1], kRsaKeySuffix[1]), mKeyset.nca.header_sign_key.modulus, fnd::rsa::kRsa2048Size);
 	
-	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kXciHeaderBase, kRsaKeySuffix[0]), mKeyset.xci.header_sign_key.priv_exponent, 0x100);
-	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kXciHeaderBase, kRsaKeySuffix[1]), mKeyset.xci.header_sign_key.modulus, 0x100);
+	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kXciHeaderBase, kRsaKeySuffix[0]), mKeyset.xci.header_sign_key.priv_exponent, fnd::rsa::kRsa2048Size);
+	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kXciHeaderBase, kRsaKeySuffix[1]), mKeyset.xci.header_sign_key.modulus, fnd::rsa::kRsa2048Size);
 
-	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kAcidBase, kRsaKeySuffix[0]), mKeyset.acid_sign_key.priv_exponent, 0x100);
-	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kAcidBase, kRsaKeySuffix[1]), mKeyset.acid_sign_key.modulus, 0x100);
+	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kAcidBase, kRsaKeySuffix[0]), mKeyset.acid_sign_key.priv_exponent, fnd::rsa::kRsa2048Size);
+	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kAcidBase, kRsaKeySuffix[1]), mKeyset.acid_sign_key.modulus, fnd::rsa::kRsa2048Size);
 
-	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kPackage2Base, kRsaKeySuffix[0]), mKeyset.package2_sign_key.priv_exponent, 0x100);
-	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kPackage2Base, kRsaKeySuffix[1]), mKeyset.package2_sign_key.modulus, 0x100);
+	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kPackage2Base, kRsaKeySuffix[0]), mKeyset.package2_sign_key.priv_exponent, fnd::rsa::kRsa2048Size);
+	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kPackage2Base, kRsaKeySuffix[1]), mKeyset.package2_sign_key.modulus, fnd::rsa::kRsa2048Size);
+
+	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kPkiRootBase, kRsaKeySuffix[0]), mKeyset.pki.root_sign_key.priv_exponent, fnd::rsa::kRsa4096Size);
+	_SAVE_KEYDATA(_CONCAT_2_STRINGS(kPkiRootBase, kRsaKeySuffix[1]), mKeyset.pki.root_sign_key.modulus, fnd::rsa::kRsa4096Size);
+
 
 	// save keydata from input args
 	if (args.nca_bodykey.isSet)
 	{
-		if (args.nca_bodykey.var.length() == (sizeof(crypto::aes::sAes128Key)*2))
+		if (args.nca_bodykey.var.length() == (sizeof(fnd::aes::sAes128Key)*2))
 		{
-			decodeHexStringToBytes("--bodykey", args.nca_bodykey.var, mKeyset.nca.manual_body_key_aesctr.key, sizeof(crypto::aes::sAes128Key));
+			decodeHexStringToBytes("--bodykey", args.nca_bodykey.var, mKeyset.nca.manual_body_key_aesctr.key, sizeof(fnd::aes::sAes128Key));
 		}
 		else
 		{
-			decodeHexStringToBytes("--bodykey", args.nca_bodykey.var, mKeyset.nca.manual_body_key_aesxts.key[0], sizeof(crypto::aes::sAesXts128Key));
+			decodeHexStringToBytes("--bodykey", args.nca_bodykey.var, mKeyset.nca.manual_body_key_aesxts.key[0], sizeof(fnd::aes::sAesXts128Key));
 		}
 	}
 
 	if (args.nca_titlekey.isSet)
 	{
-		if (args.nca_titlekey.var.length() == (sizeof(crypto::aes::sAes128Key)*2))
+		if (args.nca_titlekey.var.length() == (sizeof(fnd::aes::sAes128Key)*2))
 		{
-			decodeHexStringToBytes("--titlekey", args.nca_titlekey.var, mKeyset.nca.manual_title_key_aesctr.key, sizeof(crypto::aes::sAes128Key));
+			decodeHexStringToBytes("--titlekey", args.nca_titlekey.var, mKeyset.nca.manual_title_key_aesctr.key, sizeof(fnd::aes::sAes128Key));
 		}
 		else
 		{
-			decodeHexStringToBytes("--titlekey", args.nca_titlekey.var, mKeyset.nca.manual_title_key_aesxts.key[0], sizeof(crypto::aes::sAesXts128Key));
+			decodeHexStringToBytes("--titlekey", args.nca_titlekey.var, mKeyset.nca.manual_title_key_aesxts.key[0], sizeof(fnd::aes::sAesXts128Key));
+		}
+	}
+
+	// import certificate chain
+	if (args.cert_path.isSet)
+	{
+		fnd::SimpleFile cert_file;
+		fnd::Vec<byte_t> cert_raw;
+		nn::pki::SignedData<nn::pki::CertificateBody> cert;
+
+		cert_file.open(args.cert_path.var, fnd::SimpleFile::Read);
+		cert_raw.alloc(cert_file.size());
+		cert_file.read(cert_raw.data(), cert_raw.size());
+
+		for (size_t i = 0; i < cert_raw.size(); i+= cert.getBytes().size())
+		{
+			cert.fromBytes(cert_raw.data() + i, cert_raw.size() - i);
+			mCertChain.addElement(cert);
+		}
+	}
+
+	// get titlekey from ticket
+	if (args.ticket_path.isSet)
+	{
+		fnd::SimpleFile tik_file;
+		fnd::Vec<byte_t> tik_raw;
+		nn::pki::SignedData<nn::es::TicketBody_V2> tik;
+
+		// open and import ticket
+		tik_file.open(args.ticket_path.var, fnd::SimpleFile::Read);
+		tik_raw.alloc(tik_file.size());
+		tik_file.read(tik_raw.data(), tik_raw.size());
+		tik.fromBytes(tik_raw.data(), tik_raw.size());
+
+		// validate ticket signature
+		if (mCertChain.size() > 0)
+		{
+			PkiValidator pki_validator;
+			fnd::Vec<byte_t> tik_hash;
+
+			switch (nn::pki::sign::getHashAlgo(tik.getSignature().getSignType()))
+			{
+			case (nn::pki::sign::HASH_ALGO_SHA1):
+				tik_hash.alloc(fnd::sha::kSha1HashLen);
+				fnd::sha::Sha1(tik.getBody().getBytes().data(), tik.getBody().getBytes().size(), tik_hash.data());
+				break;
+			case (nn::pki::sign::HASH_ALGO_SHA256):
+				tik_hash.alloc(fnd::sha::kSha256HashLen);
+				fnd::sha::Sha256(tik.getBody().getBytes().data(), tik.getBody().getBytes().size(), tik_hash.data());
+				break;
+			}
+
+			try 
+			{
+				pki_validator.setRootKey(mKeyset.pki.root_sign_key);
+				pki_validator.addCertificates(mCertChain);
+				pki_validator.validateSignature(tik.getBody().getIssuer(), tik.getSignature().getSignType(), tik.getSignature().getSignature(), tik_hash);
+			}
+			catch (const fnd::Exception& e)
+			{
+				std::cout << "[WARNING] Ticket signature could not be validated (" << e.error() << ")" << std::endl;
+			}
+			
+		}
+
+		// extract title key
+		if (tik.getBody().getTitleKeyEncType() == nn::es::ticket::AES128_CBC)
+		{
+			memcpy(mKeyset.nca.manual_title_key_aesctr.key, tik.getBody().getEncTitleKey(), fnd::aes::kAes128KeySize);
+		}
+		else
+		{
+			std::cout << "[WARNING] Titlekey not imported from ticket because it is personalised" << std::endl;
 		}
 	}
 
@@ -536,10 +638,10 @@ void UserSettings::populateKeyset(sCmdArgs& args)
 				{
 					if (mKeyset.nca.header_key == zeros_aes_xts_key)
 					{
-						crypto::aes::sAes128Key nca_header_kek;
-						nx::AesKeygen::generateKey(nca_header_kek.key, aes_kek_generation_source.key, nca_header_kek_source.key, aes_key_generation_source.key, master_key[i].key);
-						nx::AesKeygen::generateKey(mKeyset.nca.header_key.key[0], nca_header_key_source.key[0], nca_header_kek.key);
-						nx::AesKeygen::generateKey(mKeyset.nca.header_key.key[1], nca_header_key_source.key[1], nca_header_kek.key);
+						fnd::aes::sAes128Key nca_header_kek;
+						nn::hac::AesKeygen::generateKey(nca_header_kek.key, aes_kek_generation_source.key, nca_header_kek_source.key, aes_key_generation_source.key, master_key[i].key);
+						nn::hac::AesKeygen::generateKey(mKeyset.nca.header_key.key[0], nca_header_key_source.key[0], nca_header_kek.key);
+						nn::hac::AesKeygen::generateKey(mKeyset.nca.header_key.key[1], nca_header_key_source.key[1], nca_header_kek.key);
 						//printf("nca header key[0] ");
 						//fnd::SimpleTextOutput::hexDump(mKeyset.nca.header_key.key[0], 0x10);
 						//printf("nca header key[1] ");
@@ -547,11 +649,11 @@ void UserSettings::populateKeyset(sCmdArgs& args)
 					}
 				}
 
-				for (size_t j = 0; j < nx::nca::kKeyAreaEncryptionKeyNum; j++)
+				for (size_t j = 0; j < nn::hac::nca::kKeyAreaEncryptionKeyNum; j++)
 				{
 					if (key_area_key_source[j] != zeros_aes_key && mKeyset.nca.key_area_key[j][i] == zeros_aes_key)
 					{
-						nx::AesKeygen::generateKey(mKeyset.nca.key_area_key[j][i].key, aes_kek_generation_source.key, key_area_key_source[j].key, aes_key_generation_source.key, master_key[i].key);
+						nn::hac::AesKeygen::generateKey(mKeyset.nca.key_area_key[j][i].key, aes_kek_generation_source.key, key_area_key_source[j].key, aes_key_generation_source.key, master_key[i].key);
 						//printf("nca keak %d/%02d ", j, i);
 						//fnd::SimpleTextOutput::hexDump(mKeyset.nca.key_area_key[j][i].key, 0x10);
 					}
@@ -560,19 +662,19 @@ void UserSettings::populateKeyset(sCmdArgs& args)
 
 			if (ticket_titlekek_source != zeros_aes_key && mKeyset.ticket.titlekey_kek[i] == zeros_aes_key)
 			{
-				nx::AesKeygen::generateKey(mKeyset.ticket.titlekey_kek[i].key, ticket_titlekek_source.key, master_key[i].key);
+				nn::hac::AesKeygen::generateKey(mKeyset.ticket.titlekey_kek[i].key, ticket_titlekek_source.key, master_key[i].key);
 				//printf("ticket titlekek %02d ", i);
 				//fnd::SimpleTextOutput::hexDump(mKeyset.ticket.titlekey_kek[i].key, 0x10);
 			}
 			if (package2_key_source != zeros_aes_key && mKeyset.package2_key[i] == zeros_aes_key)
 			{
-				nx::AesKeygen::generateKey(mKeyset.package2_key[i].key, package2_key_source.key, master_key[i].key);
+				nn::hac::AesKeygen::generateKey(mKeyset.package2_key[i].key, package2_key_source.key, master_key[i].key);
 				//printf("package2 key %02d ", i);
 				//fnd::SimpleTextOutput::hexDump(mKeyset.package2_key[i].key, 0x10);
 			}
 		}
 		/*
-		for (size_t j = 0; j < nx::nca::kKeyAreaEncryptionKeyNum; j++)
+		for (size_t j = 0; j < nn::hac::nca::kKeyAreaEncryptionKeyNum; j++)
 		{
 			if (mKeyset.nca.key_area_key[j][i] != zeros_aes_key)
 			{
@@ -609,7 +711,7 @@ void UserSettings::populateUserSettings(sCmdArgs& args)
 	if (args.inst_type.isSet)
 		mInstructionType = getInstructionTypeFromString(*args.inst_type);
 	else
-		mInstructionType = nx::npdm::INSTR_64BIT; // default 64bit
+		mInstructionType = nn::hac::npdm::INSTR_64BIT; // default 64bit
 	
 	mListApi = args.list_api.isSet;
 	mListSymbols = args.list_sym.isSet;
@@ -688,6 +790,10 @@ FileType UserSettings::getFileTypeFromString(const std::string& type_str)
 		type = FILE_NRO;
 	else if (str == "nacp")
 		type = FILE_NACP;
+	else if (str == "cert")
+		type = FILE_PKI_CERT;
+	else if (str == "tik")
+		type = FILE_ES_TIK;
 	else if (str == "aset" || str == "asset")
 		type = FILE_HB_ASSET;
 	else
@@ -717,19 +823,19 @@ FileType UserSettings::determineFileTypeFromFile(const std::string& path)
 #define _ASSERT_SIZE(sz) (scratch.size() >= (sz))
 
 	// test npdm
-	if (_ASSERT_SIZE(sizeof(nx::sXciHeaderPage)) && _TYPE_PTR(nx::sXciHeaderPage)->header.st_magic.get() == nx::xci::kXciStructMagic)
+	if (_ASSERT_SIZE(sizeof(nn::hac::sXciHeaderPage)) && _TYPE_PTR(nn::hac::sXciHeaderPage)->header.st_magic.get() == nn::hac::xci::kXciStructMagic)
 		file_type = FILE_XCI;
 	// test pfs0
-	else if (_ASSERT_SIZE(sizeof(nx::sPfsHeader)) && _TYPE_PTR(nx::sPfsHeader)->st_magic.get() == nx::pfs::kPfsStructMagic)
+	else if (_ASSERT_SIZE(sizeof(nn::hac::sPfsHeader)) && _TYPE_PTR(nn::hac::sPfsHeader)->st_magic.get() == nn::hac::pfs::kPfsStructMagic)
 		file_type = FILE_PARTITIONFS;
 	// test hfs0
-	else if (_ASSERT_SIZE(sizeof(nx::sPfsHeader)) && _TYPE_PTR(nx::sPfsHeader)->st_magic.get() == nx::pfs::kHashedPfsStructMagic)
+	else if (_ASSERT_SIZE(sizeof(nn::hac::sPfsHeader)) && _TYPE_PTR(nn::hac::sPfsHeader)->st_magic.get() == nn::hac::pfs::kHashedPfsStructMagic)
 		file_type = FILE_PARTITIONFS;
 	// test romfs
-	else if (_ASSERT_SIZE(sizeof(nx::sRomfsHeader)) && _TYPE_PTR(nx::sRomfsHeader)->header_size.get() == sizeof(nx::sRomfsHeader) && _TYPE_PTR(nx::sRomfsHeader)->sections[1].offset.get() == (_TYPE_PTR(nx::sRomfsHeader)->sections[0].offset.get() + _TYPE_PTR(nx::sRomfsHeader)->sections[0].size.get()))
+	else if (_ASSERT_SIZE(sizeof(nn::hac::sRomfsHeader)) && _TYPE_PTR(nn::hac::sRomfsHeader)->header_size.get() == sizeof(nn::hac::sRomfsHeader) && _TYPE_PTR(nn::hac::sRomfsHeader)->sections[1].offset.get() == (_TYPE_PTR(nn::hac::sRomfsHeader)->sections[0].offset.get() + _TYPE_PTR(nn::hac::sRomfsHeader)->sections[0].size.get()))
 		file_type = FILE_ROMFS;
 	// test npdm
-	else if (_ASSERT_SIZE(sizeof(nx::sNpdmHeader)) && _TYPE_PTR(nx::sNpdmHeader)->st_magic.get() == nx::npdm::kNpdmStructMagic)
+	else if (_ASSERT_SIZE(sizeof(nn::hac::sNpdmHeader)) && _TYPE_PTR(nn::hac::sNpdmHeader)->st_magic.get() == nn::hac::npdm::kNpdmStructMagic)
 		file_type = FILE_NPDM;
 	// test nca
 	else if (determineValidNcaFromSample(scratch))
@@ -741,13 +847,19 @@ FileType UserSettings::determineFileTypeFromFile(const std::string& path)
 	else if (determineValidNacpFromSample(scratch))
 		file_type = FILE_NACP;
 	// test nso
-	else if (_ASSERT_SIZE(sizeof(nx::sNsoHeader)) && _TYPE_PTR(nx::sNsoHeader)->st_magic.get() == nx::nso::kNsoStructMagic)
+	else if (_ASSERT_SIZE(sizeof(nn::hac::sNsoHeader)) && _TYPE_PTR(nn::hac::sNsoHeader)->st_magic.get() == nn::hac::nso::kNsoStructMagic)
 		file_type = FILE_NSO;
 	// test nso
-	else if (_ASSERT_SIZE(sizeof(nx::sNroHeader)) && _TYPE_PTR(nx::sNroHeader)->st_magic.get() == nx::nro::kNroStructMagic)
+	else if (_ASSERT_SIZE(sizeof(nn::hac::sNroHeader)) && _TYPE_PTR(nn::hac::sNroHeader)->st_magic.get() == nn::hac::nro::kNroStructMagic)
 		file_type = FILE_NRO;
+	// test pki certificate
+	else if (determineValidEsCertFromSample(scratch))
+		file_type = FILE_PKI_CERT;
+	// test ticket
+	else if (determineValidEsTikFromSample(scratch))
+		file_type = FILE_ES_TIK;
 	// test hb asset
-	else if (_ASSERT_SIZE(sizeof(nx::sAssetHeader)) && _TYPE_PTR(nx::sAssetHeader)->st_magic.get() == nx::aset::kAssetStructMagic)
+	else if (_ASSERT_SIZE(sizeof(nn::hac::sAssetHeader)) && _TYPE_PTR(nn::hac::sAssetHeader)->st_magic.get() == nn::hac::aset::kAssetStructMagic)
 		file_type = FILE_HB_ASSET;
 	// else unrecognised
 	else
@@ -762,15 +874,15 @@ FileType UserSettings::determineFileTypeFromFile(const std::string& path)
 bool UserSettings::determineValidNcaFromSample(const fnd::Vec<byte_t>& sample) const
 {
 	// prepare decrypted NCA data
-	byte_t nca_raw[nx::nca::kHeaderSize];
-	nx::sNcaHeader* nca_header = (nx::sNcaHeader*)(nca_raw + nx::NcaUtils::sectorToOffset(1));
+	byte_t nca_raw[nn::hac::nca::kHeaderSize];
+	nn::hac::sNcaHeader* nca_header = (nn::hac::sNcaHeader*)(nca_raw + nn::hac::NcaUtils::sectorToOffset(1));
 	
-	if (sample.size() < nx::nca::kHeaderSize)
+	if (sample.size() < nn::hac::nca::kHeaderSize)
 		return false;
 
-	nx::NcaUtils::decryptNcaHeader(sample.data(), nca_raw, mKeyset.nca.header_key);
+	nn::hac::NcaUtils::decryptNcaHeader(sample.data(), nca_raw, mKeyset.nca.header_key);
 
-	if (nca_header->st_magic.get() != nx::nca::kNca2StructMagic && nca_header->st_magic.get() != nx::nca::kNca3StructMagic)
+	if (nca_header->st_magic.get() != nn::hac::nca::kNca2StructMagic && nca_header->st_magic.get() != nn::hac::nca::kNca3StructMagic)
 		return false;
 
 	return true;
@@ -778,39 +890,39 @@ bool UserSettings::determineValidNcaFromSample(const fnd::Vec<byte_t>& sample) c
 
 bool UserSettings::determineValidCnmtFromSample(const fnd::Vec<byte_t>& sample) const
 {
-	if (sample.size() < sizeof(nx::sContentMetaHeader))
+	if (sample.size() < sizeof(nn::hac::sContentMetaHeader))
 		return false;
 
-	const nx::sContentMetaHeader* data = (const nx::sContentMetaHeader*)sample.data();
+	const nn::hac::sContentMetaHeader* data = (const nn::hac::sContentMetaHeader*)sample.data();
 
-	size_t minimum_size = sizeof(nx::sContentMetaHeader) + data->exhdr_size.get() + data->content_count.get() * sizeof(nx::sContentInfo) + data->content_meta_count.get() * sizeof(nx::sContentMetaInfo) + nx::cnmt::kDigestLen;
+	size_t minimum_size = sizeof(nn::hac::sContentMetaHeader) + data->exhdr_size.get() + data->content_count.get() * sizeof(nn::hac::sContentInfo) + data->content_meta_count.get() * sizeof(nn::hac::sContentMetaInfo) + nn::hac::cnmt::kDigestLen;
 
 	if (sample.size() < minimum_size)
 		return false;
 
-	if (data->type == nx::cnmt::METATYPE_APPLICATION)
+	if (data->type == nn::hac::cnmt::METATYPE_APPLICATION)
 	{
-		const nx::sApplicationMetaExtendedHeader* meta = (const nx::sApplicationMetaExtendedHeader*)(sample.data() + sizeof(nx::sContentMetaHeader));
+		const nn::hac::sApplicationMetaExtendedHeader* meta = (const nn::hac::sApplicationMetaExtendedHeader*)(sample.data() + sizeof(nn::hac::sContentMetaHeader));
 		if ((meta->patch_id.get() & data->id.get()) != data->id.get())
 			return false;
 	}
-	else if (data->type == nx::cnmt::METATYPE_PATCH)
+	else if (data->type == nn::hac::cnmt::METATYPE_PATCH)
 	{
-		const nx::sPatchMetaExtendedHeader* meta = (const nx::sPatchMetaExtendedHeader*)(sample.data() + sizeof(nx::sContentMetaHeader));
+		const nn::hac::sPatchMetaExtendedHeader* meta = (const nn::hac::sPatchMetaExtendedHeader*)(sample.data() + sizeof(nn::hac::sContentMetaHeader));
 		if ((meta->application_id.get() & data->id.get()) != meta->application_id.get())
 			return false;
 
 		minimum_size += meta->extended_data_size.get();
 	}
-	else if (data->type == nx::cnmt::METATYPE_ADD_ON_CONTENT)
+	else if (data->type == nn::hac::cnmt::METATYPE_ADD_ON_CONTENT)
 	{
-		const nx::sAddOnContentMetaExtendedHeader* meta = (const nx::sAddOnContentMetaExtendedHeader*)(sample.data() + sizeof(nx::sContentMetaHeader));
+		const nn::hac::sAddOnContentMetaExtendedHeader* meta = (const nn::hac::sAddOnContentMetaExtendedHeader*)(sample.data() + sizeof(nn::hac::sContentMetaHeader));
 		if ((meta->application_id.get() & data->id.get()) != meta->application_id.get())
 			return false;
 	}
-	else if (data->type == nx::cnmt::METATYPE_DELTA)
+	else if (data->type == nn::hac::cnmt::METATYPE_DELTA)
 	{
-		const nx::sDeltaMetaExtendedHeader* meta = (const nx::sDeltaMetaExtendedHeader*)(sample.data() + sizeof(nx::sContentMetaHeader));
+		const nn::hac::sDeltaMetaExtendedHeader* meta = (const nn::hac::sDeltaMetaExtendedHeader*)(sample.data() + sizeof(nn::hac::sContentMetaHeader));
 		if ((meta->application_id.get() & data->id.get()) != meta->application_id.get())
 			return false;
 
@@ -825,12 +937,12 @@ bool UserSettings::determineValidCnmtFromSample(const fnd::Vec<byte_t>& sample) 
 
 bool UserSettings::determineValidNacpFromSample(const fnd::Vec<byte_t>& sample) const
 {
-	if (sample.size() != sizeof(nx::sApplicationControlProperty))
+	if (sample.size() != sizeof(nn::hac::sApplicationControlProperty))
 		return false;
 
-	const nx::sApplicationControlProperty* data = (const nx::sApplicationControlProperty*)sample.data();
+	const nn::hac::sApplicationControlProperty* data = (const nn::hac::sApplicationControlProperty*)sample.data();
 
-	if (data->logo_type > nx::nacp::LOGO_Nintendo)
+	if (data->logo_type > nn::hac::nacp::LOGO_Nintendo)
 		return false;
 
 	if (data->display_version[0] == 0)
@@ -848,16 +960,60 @@ bool UserSettings::determineValidNacpFromSample(const fnd::Vec<byte_t>& sample) 
 	return true;
 }
 
-nx::npdm::InstructionType UserSettings::getInstructionTypeFromString(const std::string & type_str)
+bool UserSettings::determineValidEsCertFromSample(const fnd::Vec<byte_t>& sample) const
+{
+	nn::pki::SignatureBlock sign;
+
+	try 
+	{
+		sign.fromBytes(sample.data(), sample.size());
+	}
+	catch (...)
+	{
+		return false;
+	}
+
+	if (sign.isLittleEndian() == true)
+		return false;
+
+	if (sign.getSignType() != nn::pki::sign::SIGN_ID_RSA4096_SHA256 && sign.getSignType() != nn::pki::sign::SIGN_ID_RSA2048_SHA256 && sign.getSignType() != nn::pki::sign::SIGN_ID_ECDSA240_SHA256)
+		return false;
+
+	return true;
+}
+
+bool UserSettings::determineValidEsTikFromSample(const fnd::Vec<byte_t>& sample) const
+{
+	nn::pki::SignatureBlock sign;
+
+	try 
+	{
+		sign.fromBytes(sample.data(), sample.size());
+	}
+	catch (...)
+	{
+		return false;
+	}
+
+	if (sign.isLittleEndian() == false)
+		return false;
+
+	if (sign.getSignType() != nn::pki::sign::SIGN_ID_RSA2048_SHA256)
+		return false;
+
+	return true;
+}
+
+nn::hac::npdm::InstructionType UserSettings::getInstructionTypeFromString(const std::string & type_str)
 {
 	std::string str = type_str;
 	std::transform(str.begin(), str.end(), str.begin(), ::tolower);
 
-	nx::npdm::InstructionType type;
+	nn::hac::npdm::InstructionType type;
 	if (str == "32bit")
-		type = nx::npdm::INSTR_32BIT;
+		type = nn::hac::npdm::INSTR_32BIT;
 	else if (str == "64bit")
-		type = nx::npdm::INSTR_64BIT;
+		type = nn::hac::npdm::INSTR_64BIT;
 	else
 		throw fnd::Exception(kModuleName, "Unsupported instruction type: " + str);
 

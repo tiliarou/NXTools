@@ -2,12 +2,12 @@
 #pragma once
 #include <string>
 #include <fnd/types.h>
-#include <crypto/aes.h>
-#include <crypto/rsa.h>
-#include <nx/nca.h>
+#include <fnd/aes.h>
+#include <fnd/rsa.h>
+#include <nn/hac/nca.h>
 
 static const size_t kMasterKeyNum = 0x20;
-static const size_t kNcaKeakNum = nx::nca::kKeyAreaEncryptionKeyNum;
+static const size_t kNcaKeakNum = nn::hac::nca::kKeyAreaEncryptionKeyNum;
 
 enum IFileOwnershipMode
 {
@@ -27,6 +27,8 @@ enum FileType
 	FILE_NSO,
 	FILE_NRO,
 	FILE_NACP,
+	FILE_PKI_CERT,
+	FILE_ES_TIK,
 	FILE_HB_ASSET,
 	FILE_INVALID = -1,
 };
@@ -61,35 +63,39 @@ struct sOptional
 
 struct sKeyset
 {
-	crypto::rsa::sRsa2048Key acid_sign_key;
-
-	crypto::aes::sAes128Key package1_key[kMasterKeyNum];
-	crypto::rsa::sRsa2048Key package2_sign_key;
-	crypto::aes::sAes128Key package2_key[kMasterKeyNum];
+	fnd::rsa::sRsa2048Key acid_sign_key;
+	fnd::aes::sAes128Key package1_key[kMasterKeyNum];
+	fnd::rsa::sRsa2048Key package2_sign_key;
+	fnd::aes::sAes128Key package2_key[kMasterKeyNum];
 
 	struct sNcaData
 	{
-		crypto::rsa::sRsa2048Key header_sign_key;
-		crypto::aes::sAesXts128Key header_key;
-		crypto::aes::sAes128Key key_area_key[kNcaKeakNum][kMasterKeyNum];
+		fnd::rsa::sRsa2048Key header_sign_key;
+		fnd::aes::sAesXts128Key header_key;
+		fnd::aes::sAes128Key key_area_key[kNcaKeakNum][kMasterKeyNum];
 
-		crypto::aes::sAes128Key manual_title_key_aesctr;
-		crypto::aes::sAesXts128Key manual_title_key_aesxts;
-		crypto::aes::sAes128Key manual_body_key_aesctr;
-		crypto::aes::sAesXts128Key manual_body_key_aesxts;
+		fnd::aes::sAes128Key manual_title_key_aesctr;
+		fnd::aes::sAesXts128Key manual_title_key_aesxts;
+		fnd::aes::sAes128Key manual_body_key_aesctr;
+		fnd::aes::sAesXts128Key manual_body_key_aesxts;
 	} nca;
 
 	struct sXciData
 	{
-		crypto::rsa::sRsa2048Key header_sign_key;
-		crypto::aes::sAes128Key header_key;
+		fnd::rsa::sRsa2048Key header_sign_key;
+		fnd::aes::sAes128Key header_key;
 	} xci;
-	
+
 	struct sTicketData
 	{
-		crypto::rsa::sRsa2048Key sign_key;
-		crypto::aes::sAes128Key titlekey_kek[kMasterKeyNum];
+		fnd::rsa::sRsa2048Key sign_key;
+		fnd::aes::sAes128Key titlekey_kek[kMasterKeyNum];
 	} ticket;
+
+	struct sPkiData
+	{
+		fnd::rsa::sRsa4096Key root_sign_key;
+	} pki;
 };
 
 inline byte_t charToByte(char chr)
